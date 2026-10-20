@@ -34,6 +34,8 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 SAPS is a browser-based educational simulation of an emergency vehicle priority controller at a four-way intersection. All signals, detections, vehicle movement, RFID reads, and event records shown in this prototype are simulated. It is not connected to public-road traffic signals or physical hardware.
 
+**Live demo:** https://prayaglohakare-stack.github.io/smart-ambulance-priority-system/
+
 ## Architecture
 
 - `src/core/controller.ts` is a React-independent deterministic state machine with injected clock and configurable durations.

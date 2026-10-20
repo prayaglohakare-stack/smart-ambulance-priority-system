@@ -1,0 +1,21 @@
+import { describe, expect, it } from 'vitest'
+import { TrafficController, type Direction } from './controller'
+
+describe('SAPS deterministic traffic controller',()=>{
+ let now:number;let c:TrafficController
+ const setup=()=>{now=0;c=new TrafficController(()=>now,{green:1000,yellow:300,allRed:150,passageTimeout:2000})}
+ const advance=(ms:number)=>{now+=ms;c.tick()}
+ const allRed=(s= c.snapshot())=>Object.values(s.signals).every(x=>x==='red')
+ const scan=(d:Direction='East',tag='AMB-7F2A')=>c.scan(d,tag)
+ it('never grants conflicting green signals',()=>{setup();for(let i=0;i<4;i++){const s=c.snapshot();expect(!(s.signals.North==='green'&&s.signals.East==='green')).toBe(true);expect(!(s.signals.South==='green'&&s.signals.West==='green')).toBe(true);scan(i%2?'North':'East',i%2?'AMB-91C4':'AMB-7F2A');for(let j=0;j<4;j++){advance(301);const a=c.snapshot();expect(!(a.signals.North==='green'&&a.signals.East==='green')).toBe(true);if(a.active) c.confirmPassage();}}})
+ it('requires yellow and all-red before emergency green',()=>{setup();scan();c.tick();expect(c.snapshot().phase).toBe('yellow');advance(299);expect(c.snapshot().phase).toBe('yellow');advance(1);expect(c.snapshot().phase).toBe('all-red');expect(allRed()).toBe(true);advance(149);expect(c.snapshot().phase).toBe('all-red');advance(1);expect(c.snapshot().phase).toBe('emergency-green')})
+ it('rejects unauthorized tags and never grants them priority',()=>{setup();scan('East','UNAUTH-00FF');expect(c.snapshot().counts.rejected).toBe(1);expect(c.snapshot().queue).toHaveLength(0);expect(c.snapshot().active).toBeNull()})
+ it('does not directly force green or restart transition on duplicate scan',()=>{setup();scan();expect(c.snapshot().phase).toBe('north-south');c.tick();expect(c.snapshot().phase).toBe('yellow');scan();expect(c.snapshot().queue).toHaveLength(1);expect(c.snapshot().phase).toBe('yellow')})
+ it('arbitrates simultaneous requests FIFO deterministically with safe clearance between them',()=>{setup();scan('East','AMB-7F2A');scan('North','AMB-91C4');expect(c.snapshot().queue.map(x=>x.direction)).toEqual(['East','North']);c.tick();advance(300);advance(150);expect(c.snapshot().active?.direction).toBe('East');c.confirmPassage();expect(c.snapshot().phase).toBe('yellow');advance(300);expect(c.snapshot().phase).toBe('all-red');advance(150);expect(c.snapshot().active?.direction).toBe('North')})
+ it('requires explicit passage confirmation and enters conservative timeout recovery',()=>{setup();scan();c.tick();advance(300);advance(150);expect(c.snapshot().active?.passage).toBe(false);advance(2001);expect(c.snapshot().phase).toBe('recovery');expect(allRed()).toBe(true);expect(c.snapshot().events[0].kind).toBe('fault');c.recover();expect(c.snapshot().phase).toBe('all-red')})
+ it('safe reset holds all-red before restoration',()=>{setup();c.reset();expect(c.snapshot().phase).toBe('all-red');expect(allRed()).toBe(true);advance(149);expect(allRed()).toBe(true);advance(1);expect(c.snapshot().signals.North).toBe('green')})
+ it('marks every audit event as simulation-generated',()=>{setup();scan();for(const event of c.snapshot().events)expect(event.simulated).toBe(true);expect(c.snapshot().events.some(e=>e.kind==='auth')).toBe(true)})
+ it('confirms passage explicitly then runs yellow and all-red before resuming',()=>{setup();scan();c.tick();advance(300);advance(150);expect(c.confirmPassage()).toBe(true);expect(c.snapshot().phase).toBe('yellow');expect(c.snapshot().signals.East).toBe('yellow');advance(300);expect(c.snapshot().phase).toBe('all-red');expect(allRed()).toBe(true);advance(150);expect(c.snapshot().phase).toBe('east-west')})
+ it('cycles normal traffic between opposing groups with clearances',()=>{setup();advance(1000);expect(c.snapshot().phase).toBe('yellow');advance(300);expect(c.snapshot().phase).toBe('all-red');expect(allRed()).toBe(true);advance(150);expect(c.snapshot().phase).toBe('east-west');expect(c.snapshot().signals.East).toBe('green')})
+ it('pause holds current indications and does not bypass clearance',()=>{setup();scan();c.tick();expect(c.snapshot().phase).toBe('yellow');c.togglePause();advance(1000);expect(c.snapshot().phase).toBe('yellow');expect(c.snapshot().signals.North).toBe('yellow');c.togglePause();advance(300);expect(c.snapshot().phase).toBe('all-red')})
+})
